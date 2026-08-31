@@ -106,29 +106,31 @@
 
     <!-- ── SHOULDER ──────────────────────────────────── -->
     <link name="shoulder_link">
-        <visual>
-            <origin xyz="-0.045 0 -0.39" rpy="0 0 0"/>
-            <geometry>
-                <mesh filename="package://scara_description/meshes/shoulder_link.stl"
-                      scale="0.001 0.001 0.001"/>
-            </geometry>
-            <material name="scara_mid_blue"/>
-        </visual>
-        <collision>
-            <origin xyz="-0.045 0 -0.39" rpy="0 0 0"/>
-            <geometry>
-                <mesh filename="package://scara_description/meshes/shoulder_link.stl"
-                      scale="0.001 0.001 0.001"/>
-            </geometry>
-        </collision>
-        <inertial>
-            <origin xyz="-0.045 0 -0.39" rpy="0 0 0"/>
-            <mass value="3.0"/>
-            <inertia ixx="0.01" ixy="0.0" ixz="0.0"
-                               iyy="0.01" iyz="0.0"
-                               izz="0.01"/>
-        </inertial>
-    </link>
+    <visual>
+        <origin xyz="-0.059954333 -0.059974857 -0.390000" rpy="0 0 0"/>
+        <geometry>
+            <mesh filename="package://scara_description/meshes/shoulder_link.stl"
+                  scale="0.001 0.001 0.001"/>
+        </geometry>
+        <material name="scara_mid_blue"/>
+    </visual>
+
+    <collision>
+        <origin xyz="-0.059954333 -0.059974857 -0.390000" rpy="0 0 0"/>
+        <geometry>
+            <mesh filename="package://scara_description/meshes/shoulder_link.stl"
+                  scale="0.001 0.001 0.001"/>
+        </geometry>
+    </collision>
+
+    <inertial>
+        <origin xyz="-0.059954333 -0.059974857 -0.390000" rpy="0 0 0"/>
+        <mass value="3.0"/>
+        <inertia ixx="0.01" ixy="0.0" ixz="0.0"
+                 iyy="0.01" iyz="0.0"
+                 izz="0.01"/>
+    </inertial>
+</link>
 
     <joint name="shoulder_joint" type="prismatic">
         <origin xyz="0 0 0.28" rpy="0 0 0"/>

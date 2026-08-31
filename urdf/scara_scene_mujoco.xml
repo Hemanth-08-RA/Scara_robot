@@ -40,32 +40,39 @@
 
     <!-- SCARA Robot Mounted Flat on Table Surface -->
     <body name="base_link" pos="0.05 0.08 0.20">
-      <geom type="mesh" mesh="base_link" material="scara_blue"/>
+      <geom type="mesh" mesh="base_link" material="scara_blue" contype="0" conaffinity="0"/>
 
       <body name="column_link" pos="0.045 0 0.089">
         <joint name="column_joint" pos="0 0 0" axis="0 0 1" range="-2.0 2.0" damping="10" armature="0.05"/>
-        <geom type="mesh" mesh="column_link" pos="-0.045 0 -0.089" material="scara_blue"/>
+        <geom type="mesh" mesh="column_link" pos="-0.045 0 -0.089" material="scara_blue" contype="0" conaffinity="0"/>
 
         <body name="shoulder_link" pos="0 0 0.28">
           <joint name="shoulder_joint" type="slide" pos="0 0 0" axis="0 0 1" range="-0.15 0.02" damping="50" armature="0.1"/>
-          <geom type="mesh" mesh="shoulder_link" pos="-0.045 0 -0.39" material="scara_blue"/>
+          <geom type="mesh" mesh="shoulder_link" pos="-0.059954333 -0.059974857 -0.390000" material="scara_blue" contype="0" conaffinity="0"/>
 
           <body name="forearm_link" pos="0.228 0 -0.04">
             <joint name="forearm_joint" pos="0 0 0" axis="0 0 1" range="-2.0 2.0" damping="10" armature="0.05"/>
-            <geom type="mesh" mesh="forearm_link" pos="-0.273 0 -0.351" material="scara_blue"/>
+            <geom type="mesh" mesh="forearm_link" pos="-0.273 0 -0.351" material="scara_blue" contype="0" conaffinity="0"/>
 
             <body name="wrist_link" pos="0.1365 0 -0.06">
               <joint name="wrist_joint" pos="0 0 0" axis="0 0 1" range="-4.712 4.712" damping="5" armature="0.02"/>
-              <geom type="mesh" mesh="wrist_link" pos="-0.4095 0 -0.291" material="scara_dark_blue"/>
+              <geom type="mesh" mesh="wrist_link" pos="-0.4095 0 -0.291" material="scara_dark_blue" contype="0" conaffinity="0"/>
 
               <body name="left_finger_link" pos="0 0.064 -0.0135">
                 <joint name="left_finger_joint" type="slide" pos="0 0 0" axis="0 1 0" range="-0.06 0.0" damping="10" armature="0.02"/>
-                <geom type="mesh" mesh="left_finger_link" pos="-0.409 -0.0626 -0.2775" material="scara_grey"/>
+                <geom type="mesh" mesh="left_finger_link" pos="-0.409 -0.0626 -0.2775" material="scara_grey" contype="0" conaffinity="0"/>
               </body>
 
               <body name="right_finger_link" pos="0 -0.064 -0.0135">
                 <joint name="right_finger_joint" type="slide" pos="0 0 0" axis="0 -1 0" range="-0.06 0.0" damping="10" armature="0.02"/>
-                <geom type="mesh" mesh="right_finger_link" pos="-0.409 0.0626 -0.2775" material="scara_grey"/>
+                <geom type="mesh" mesh="right_finger_link" pos="-0.409 0.0626 -0.2775" material="scara_grey" contype="0" conaffinity="0"/>
+<geom name="right_finger_collision"
+      type="box"
+      pos="-0.409 0.0626 -0.2775"
+      size="0.025 0.008 0.035"
+      contype="1"
+      conaffinity="1"
+      rgba="0 0 0 0"/>
               </body>
             </body>
           </body>
@@ -90,7 +97,11 @@
 
   <actuator>
     <position name="act_column" joint="column_joint" kp="500" kv="50"/>
-    <position name="act_shoulder" joint="shoulder_joint" kp="1000" kv="100"/>
+    <position name="act_shoulder"
+          joint="shoulder_joint"
+          kp="1000"
+          kv="100"
+          ctrlrange="-0.15 0.02"/>
     <position name="act_forearm" joint="forearm_joint" kp="500" kv="50"/>
     <position name="act_wrist" joint="wrist_joint" kp="200" kv="20"/>
     <position name="act_left_finger" joint="left_finger_joint" kp="300" kv="30"/>

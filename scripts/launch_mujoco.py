@@ -8,10 +8,18 @@ import mujoco
 import mujoco.viewer
 
 def get_scene_xml_path():
-    pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    xml_path = os.path.join(pkg_dir, 'urdf', 'scara_scene_mujoco.xml')
+    workspace_dir = os.path.expanduser('~/scara_description_ws')
+    xml_path = os.path.join(
+        workspace_dir,
+        'urdf',
+        'scara_scene_mujoco.xml'
+    )
+
     if not os.path.exists(xml_path):
-        xml_path = '/home/hemanthros/scara_description_ws/urdf/scara_scene_mujoco.xml'
+        raise FileNotFoundError(
+            f"MuJoCo scene not found: {xml_path}"
+        )
+
     return xml_path
 
 def main():

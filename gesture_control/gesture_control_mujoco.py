@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import os
-import sys
 import time
 import cv2
 import numpy as np
@@ -9,189 +8,467 @@ import mujoco
 import mujoco.viewer
 import mediapipe as mp
 
+
 def get_scene_xml_path():
-    pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    xml_path = os.path.join(pkg_dir, 'urdf', 'scara_scene_mujoco.xml')
-    if not os.path.exists(xml_path):
-        xml_path = '/home/hemanthros/scara_description_ws/urdf/scara_scene_mujoco.xml'
-    return xml_path
-
-def count_extended_fingers(lm):
-    tips = [4, 8, 12, 16, 20]
-    pips = [2, 6, 10, 14, 18]
-
-    extended = []
-    # Thumb check
-    if abs(lm[4].x - lm[0].x) > 0.08 and (lm[4].x > lm[2].x or lm[4].y < lm[3].y):
-        extended.append(1)
-    else:
-        extended.append(0)
-
-    # 4 Fingers (Index, Middle, Ring, Pinky: tip above PIP in Y-axis)
-    for i in range(1, 5):
-        if lm[tips[i]].y < lm[pips[i]].y:
-            extended.append(1)
-        else:
-            extended.append(0)
-
-    return extended
+    return "/home/robotics/scara_description_ws/urdf/scara_scene_mujoco.xml"
 
 def main():
-    print("==================================================================")
-    print("=== SCARA 2-Step Finger Select + Hand Tilt Controller (MuJoCo) ===")
-    print("==================================================================")
-    print(" STEP 1: Select Joint by Number of Extended Fingers:")
-    print("   ☝️ 1 Finger  : Joint 1 - Base Column Rotation")
-    print("   ✌️ 2 Fingers : Joint 2 - Z-Axis Elevation Height")
-    print("   🤟 3 Fingers : Joint 3 - Forearm Elbow Angle")
-    print("   🖖 4 Fingers : Joint 4 - Wrist Rotation Angle")
-    print("   🖐️ 5 Fingers : Joint 5 - Gripper Open / Close")
-    print("\n STEP 2: Choose Motion Direction by Tilting Hand:")
-    print("   ↩️ Tilt Hand LEFT  : Move Selected Joint LEFT / DOWN / OPEN")
-    print("   ⏹️ Keep Hand LEVEL : HOLD Selected Joint Position")
-    print("   ↪️ Tilt Hand RIGHT : Move Selected Joint RIGHT / UP / CLOSE")
-    print("==================================================================\n")
+
+    print("""
+============================================================
+        SCARA SIMPLE ONE-HAND GESTURE CONTROL
+============================================================
+
+  🖐 OPEN HAND  = MOVE ROBOT
+  ✊ FIST       = HOLD / STOP
+  🤏 PINCH      = CLOSE GRIPPER
+
+  HAND MOVEMENT:
+    LEFT / RIGHT  → BASE ROTATION
+    UP / DOWN     → FOREARM ROTATION
+    HAND SIZE     → Z-AXIS
+
+  Gripper:
+    🤏 PINCH      → CLOSE
+    🖐 OPEN       → OPEN
+
+  Q / ESC        → EXIT
+============================================================
+""")
+
+    # ---------------------------------------------------------
+    # Load MuJoCo
+    # ---------------------------------------------------------
 
     xml_path = get_scene_xml_path()
+
+    print("Loading MuJoCo model from:")
+    print(xml_path)
+
     model = mujoco.MjModel.from_xml_path(xml_path)
     data = mujoco.MjData(model)
 
-    # Initialize MediaPipe Hand Tracking
+    # ---------------------------------------------------------
+    # MediaPipe
+    # ---------------------------------------------------------
+
     mp_hands = mp.solutions.hands
+    mp_draw = mp.solutions.drawing_utils
+
     hands = mp_hands.Hands(
         static_image_mode=False,
         max_num_hands=1,
         min_detection_confidence=0.6,
         min_tracking_confidence=0.6
     )
-    mp_draw = mp.solutions.drawing_utils
 
-    # Open Webcam
+    # ---------------------------------------------------------
+    # Camera
+    # ---------------------------------------------------------
+
     cap = cv2.VideoCapture(0)
-    camera_available = cap.isOpened()
 
-    if not camera_available:
-        print("[WARNING] Webcam camera index 0 not available.")
+    if not cap.isOpened():
+        print("[ERROR] Camera could not be opened.")
+        return
 
-    # Target joint positions
-    curr_column = 0.0
-    curr_shoulder = 0.0
-    curr_forearm = 0.0
-    curr_wrist = 0.0
-    curr_gripper = -0.05
+    # ---------------------------------------------------------
+    # Robot targets
+    # ---------------------------------------------------------
 
-    # Incremental speeds per frame
-    SPEED_COLUMN = 0.025
-    SPEED_SHOULDER = 0.002
-    SPEED_FOREARM = 0.025
-    SPEED_WRIST = 0.035
+    base_target = 0.0
+    z_target = 0.0
+    forearm_target = 0.0
+    wrist_target = 0.0
+
+    gripper_target = -0.05
+
+    # Robot limits
+    BASE_MIN = -2.0
+    BASE_MAX = 2.0
+
+    Z_MIN = -0.15
+    Z_MAX = 0.02
+
+    FOREARM_MIN = -2.0
+    FOREARM_MAX = 2.0
+
+    WRIST_MIN = -4.71
+    WRIST_MAX = 4.71
+
+    GRIP_OPEN = -0.05
+    GRIP_CLOSED = 0.0
+
+    # ---------------------------------------------------------
+    # Hand tracking variables
+    # ---------------------------------------------------------
+
+    previous_x = None
+    previous_y = None
+    previous_size = None
+
+    # Smoothing
+    smooth_x = None
+    smooth_y = None
+    smooth_size = None
+
+    alpha = 0.25
+
+    # Movement sensitivity
+    BASE_SPEED = 0.035
+    FOREARM_SPEED = 0.035
+    Z_SPEED = 0.002
+
+    # ---------------------------------------------------------
+    # Start MuJoCo viewer
+    # ---------------------------------------------------------
 
     with mujoco.viewer.launch_passive(model, data) as viewer:
+
         while viewer.is_running():
-            selected_joint = "None (No Hand Detected)"
-            direction_str = "HOLD"
-            status_color = (200, 200, 200)
 
-            if camera_available:
-                ret, frame = cap.read()
-                if ret:
-                    frame = cv2.flip(frame, 1)
-                    h, w, _ = frame.shape
-                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    results = hands.process(rgb_frame)
+            ret, frame = cap.read()
 
-                    if results.multi_hand_landmarks:
-                        for hand_landmarks in results.multi_hand_landmarks:
-                            mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            if not ret:
+                continue
 
-                            lm = hand_landmarks.landmark
-                            extended = count_extended_fingers(lm)
-                            total_fingers = sum(extended)
+            # Mirror camera
+            frame = cv2.flip(frame, 1)
 
-                            index_mcp = lm[5]
-                            pinky_mcp = lm[17]
+            h, w, _ = frame.shape
 
-                            # Calculate Hand Tilt / Roll Angle (radians)
-                            dx = (pinky_mcp.x - index_mcp.x) * w
-                            dy = (pinky_mcp.y - index_mcp.y) * h
-                            roll_angle = np.arctan2(dy, dx)
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-                            # Determine Direction from Hand Tilt Angle
-                            if roll_angle > 0.25:
-                                direction = 1   # RIGHT / UP / CLOSE
-                                direction_str = "▶️ RIGHT / UP / CLOSE"
-                                status_color = (0, 255, 0)
-                            elif roll_angle < -0.25:
-                                direction = -1  # LEFT / DOWN / OPEN
-                                direction_str = "◀️ LEFT / DOWN / OPEN"
-                                status_color = (0, 165, 255)
-                            else:
-                                direction = 0   # HOLD
-                                direction_str = "⏹️ HOLD POSITION"
-                                status_color = (255, 255, 0)
+            results = hands.process(rgb)
 
-                            # Step 1: Select Joint by Finger Count & Step 2: Apply Motion Direction
-                            if total_fingers == 1:
-                                selected_joint = "1. Base Column (column_joint)"
-                                curr_column += direction * SPEED_COLUMN
-                                curr_column = float(np.clip(curr_column, -2.0, 2.0))
+            status = "NO HAND"
+            status_color = (180, 180, 180)
 
-                            elif total_fingers == 2:
-                                selected_joint = "2. Z-Axis Elevation (shoulder_joint)"
-                                curr_shoulder += direction * SPEED_SHOULDER
-                                curr_shoulder = float(np.clip(curr_shoulder, -0.15, 0.02))
+            if results.multi_hand_landmarks:
 
-                            elif total_fingers == 3:
-                                selected_joint = "3. Forearm Elbow (forearm_joint)"
-                                curr_forearm += direction * SPEED_FOREARM
-                                curr_forearm = float(np.clip(curr_forearm, -2.0, 2.0))
+                hand = results.multi_hand_landmarks[0]
 
-                            elif total_fingers == 4:
-                                selected_joint = "4. Wrist Rotation (wrist_joint)"
-                                curr_wrist += direction * SPEED_WRIST
-                                curr_wrist = float(np.clip(curr_wrist, -4.71, 4.71))
+                mp_draw.draw_landmarks(
+                    frame,
+                    hand,
+                    mp_hands.HAND_CONNECTIONS
+                )
 
-                            elif total_fingers == 5:
-                                selected_joint = "5. Gripper (left_finger_joint)"
-                                if direction == 1:
-                                    curr_gripper = 0.0    # CLOSE / GRASP PUCK
-                                elif direction == -1:
-                                    curr_gripper = -0.05  # OPEN / RELEASE PUCK
+                lm = hand.landmark
 
-                            # Draw Visual HUD Panel
-                            cv2.rectangle(frame, (10, 10), (w - 10, 190), (30, 30, 30), -1)
-                            cv2.putText(frame, "SCARA Finger Select + Hand Tilt Controller", (20, 35),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                # -------------------------------------------------
+                # Palm center
+                # -------------------------------------------------
 
-                            cv2.putText(frame, f"Fingers: {total_fingers} -> Active Joint: {selected_joint}", (20, 65),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                            cv2.putText(frame, f"Hand Tilt: {direction_str}", (20, 95),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, status_color, 2)
+                palm_x = (
+                    lm[0].x +
+                    lm[5].x +
+                    lm[9].x +
+                    lm[13].x +
+                    lm[17].x
+                ) / 5.0
 
-                            # Joint Progress Readings
-                            cv2.putText(frame, f"Col: {curr_column:+.2f}r | Z: {curr_shoulder:+.3f}m | Forearm: {curr_forearm:+.2f}r | Wrist: {curr_wrist:+.2f}r | Grip: {'CLOSED' if curr_gripper > -0.02 else 'OPEN'}",
-                                        (20, 135), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
+                palm_y = (
+                    lm[0].y +
+                    lm[5].y +
+                    lm[9].y +
+                    lm[13].y +
+                    lm[17].y
+                ) / 5.0
 
-                    cv2.imshow("SCARA AI Hand Gesture Teleoperation", frame)
-                    if cv2.waitKey(1) & 0xFF == 27:  # ESC to exit
-                        break
+                # -------------------------------------------------
+                # Hand size = distance wrist to middle finger
+                # Used as approximate depth
+                # -------------------------------------------------
 
-            # Update SCARA actuators in MuJoCo
-            data.ctrl[0] = curr_column
-            data.ctrl[1] = curr_shoulder
-            data.ctrl[2] = curr_forearm
-            data.ctrl[3] = curr_wrist
-            data.ctrl[4] = curr_gripper
-            data.ctrl[5] = curr_gripper
+                dx = lm[12].x - lm[0].x
+                dy = lm[12].y - lm[0].y
 
-            # Step physics simulation forward
+                hand_size = np.sqrt(dx * dx + dy * dy)
+
+                # -------------------------------------------------
+                # Smooth hand position
+                # -------------------------------------------------
+
+                if smooth_x is None:
+                    smooth_x = palm_x
+                    smooth_y = palm_y
+                    smooth_size = hand_size
+
+                smooth_x = (
+                    alpha * palm_x +
+                    (1 - alpha) * smooth_x
+                )
+
+                smooth_y = (
+                    alpha * palm_y +
+                    (1 - alpha) * smooth_y
+                )
+
+                smooth_size = (
+                    alpha * hand_size +
+                    (1 - alpha) * smooth_size
+                )
+
+                # -------------------------------------------------
+                # Detect pinch
+                # -------------------------------------------------
+
+                thumb = lm[4]
+                index = lm[8]
+
+                pinch_distance = np.sqrt(
+                    (thumb.x - index.x) ** 2 +
+                    (thumb.y - index.y) ** 2
+                )
+
+                pinch = pinch_distance < 0.055
+
+                # -------------------------------------------------
+                # Detect fist
+                # -------------------------------------------------
+
+                fingertips = [8, 12, 16, 20]
+                pips = [6, 10, 14, 18]
+
+                folded = 0
+
+                for tip, pip in zip(fingertips, pips):
+
+                    if lm[tip].y > lm[pip].y:
+                        folded += 1
+
+                fist = folded >= 3 and not pinch
+
+                # -------------------------------------------------
+                # GRIPPER
+                # -------------------------------------------------
+
+                if pinch:
+
+                    gripper_target = GRIP_CLOSED
+
+                    status = "PINCH → GRIPPER CLOSE"
+                    status_color = (0, 0, 255)
+
+                elif not fist:
+
+                    gripper_target = GRIP_OPEN
+
+                    status = "OPEN HAND → MOVE"
+                    status_color = (0, 255, 0)
+
+                else:
+
+                    status = "FIST → HOLD"
+                    status_color = (0, 255, 255)
+
+                # -------------------------------------------------
+                # Robot movement
+                # -------------------------------------------------
+
+                if not fist and not pinch:
+
+                    # ---------------------------------------------
+                    # LEFT / RIGHT → BASE
+                    # ---------------------------------------------
+
+                    if previous_x is not None:
+
+                        movement_x = smooth_x - previous_x
+
+                        if abs(movement_x) > 0.003:
+
+                            base_target += (
+                                -movement_x * 2.0
+                            )
+
+                    # ---------------------------------------------
+                    # UP / DOWN → FOREARM
+                    # ---------------------------------------------
+
+                    if previous_y is not None:
+
+                        movement_y = smooth_y - previous_y
+
+                        if abs(movement_y) > 0.003:
+
+                            forearm_target += (
+                                -movement_y * 2.0
+                            )
+
+                    # ---------------------------------------------
+                    # HAND SIZE → Z AXIS
+                    # ---------------------------------------------
+
+                    if previous_size is not None:
+
+                        size_change = (
+                            smooth_size -
+                            previous_size
+                        )
+
+                        if abs(size_change) > 0.002:
+
+                            z_target += (
+                                -size_change * 0.5
+                            )
+
+                    # Clamp
+                    base_target = float(
+                        np.clip(
+                            base_target,
+                            BASE_MIN,
+                            BASE_MAX
+                        )
+                    )
+
+                    forearm_target = float(
+                        np.clip(
+                            forearm_target,
+                            FOREARM_MIN,
+                            FOREARM_MAX
+                        )
+                    )
+
+                    z_target = float(
+                        np.clip(
+                            z_target,
+                            Z_MIN,
+                            Z_MAX
+                        )
+                    )
+
+                # -------------------------------------------------
+                # Save previous values
+                # -------------------------------------------------
+
+                previous_x = smooth_x
+                previous_y = smooth_y
+                previous_size = smooth_size
+
+                # -------------------------------------------------
+                # Display values
+                # -------------------------------------------------
+
+                cv2.rectangle(
+                    frame,
+                    (10, 10),
+                    (w - 10, 180),
+                    (30, 30, 30),
+                    -1
+                )
+
+                cv2.putText(
+                    frame,
+                    "SCARA SIMPLE HAND CONTROL",
+                    (25, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.75,
+                    (0, 255, 255),
+                    2
+                )
+
+                cv2.putText(
+                    frame,
+                    status,
+                    (25, 75),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.65,
+                    status_color,
+                    2
+                )
+
+                cv2.putText(
+                    frame,
+                    f"BASE    : {base_target:+.2f}",
+                    (25, 110),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (255, 255, 255),
+                    1
+                )
+
+                cv2.putText(
+                    frame,
+                    f"FOREARM : {forearm_target:+.2f}",
+                    (200, 110),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (255, 255, 255),
+                    1
+                )
+
+                cv2.putText(
+                    frame,
+                    f"Z       : {z_target:+.3f}",
+                    (25, 140),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (255, 255, 255),
+                    1
+                )
+
+                cv2.putText(
+                    frame,
+                    f"GRIP    : {'CLOSED' if gripper_target == 0.0 else 'OPEN'}",
+                    (200, 140),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (255, 255, 255),
+                    1
+                )
+
+            else:
+
+                previous_x = None
+                previous_y = None
+                previous_size = None
+
+                cv2.putText(
+                    frame,
+                    "NO HAND DETECTED",
+                    (30, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8,
+                    (0, 0, 255),
+                    2
+                )
+
+            # -----------------------------------------------------
+            # Send commands to MuJoCo
+            # -----------------------------------------------------
+
+            data.ctrl[0] = base_target
+            data.ctrl[1] = z_target
+            data.ctrl[2] = forearm_target
+            data.ctrl[3] = wrist_target
+            data.ctrl[4] = gripper_target
+            data.ctrl[5] = gripper_target
+
+            # -----------------------------------------------------
+            # Step physics
+            # -----------------------------------------------------
+
             mujoco.mj_step(model, data)
+
             viewer.sync()
+
+            cv2.imshow(
+                "SCARA Gesture Control",
+                frame
+            )
+
+            key = cv2.waitKey(1) & 0xFF
+
+            if key == 27 or key == ord("q"):
+                break
+
             time.sleep(model.opt.timestep)
 
-    if camera_available:
-        cap.release()
-        cv2.destroyAllWindows()
+    cap.release()
+    cv2.destroyAllWindows()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
